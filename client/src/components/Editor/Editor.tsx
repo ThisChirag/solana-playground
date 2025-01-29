@@ -4,6 +4,7 @@ import styled, { css } from "styled-components";
 import { SpinnerWithBg } from "../Loading";
 import { Id } from "../../constants";
 import { PgCommon, PgExplorer, PgTheme } from "../../utils/pg";
+import { ChatSidebar } from "./ChatSideBar";
 
 const Home = lazy(() => import("./Home"));
 const Monaco = lazy(() => import("./Monaco"));
@@ -32,12 +33,22 @@ export const Editor = () => {
 
     return () => clearInterval(saveMetadataIntervalId);
   }, []);
+  const handleReplaceCode = ()=>{
+    
+  }
 
   if (showHome === undefined) return null;
 
   return (
     <Suspense fallback={<SpinnerWithBg loading size="2rem" />}>
-      <Wrapper>{showHome ? <Home /> : <Monaco />}</Wrapper>
+      <Wrapper>{showHome ? <Home /> : <EditorContainer>
+            <MonacoEditorContainer>
+              {/* Replace <Monaco /> with your chosen editor component */}
+              <Monaco /* pass ref or something to capture editor instance */ />
+            </MonacoEditorContainer>
+
+            <ChatSidebar onReplaceCode={handleReplaceCode} />
+          </EditorContainer>}</Wrapper>
     </Suspense>
   );
 };
@@ -66,4 +77,14 @@ const Wrapper = styled.div`
 
     ${PgTheme.convertToCSS(theme.components.editor.wrapper)};
   `}
+`;
+const EditorContainer = styled.div`
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+`;
+
+const MonacoEditorContainer = styled.div`
+  flex: 1;
+  /* Additional styling if needed */
 `;
