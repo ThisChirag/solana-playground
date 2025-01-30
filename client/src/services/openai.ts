@@ -2,11 +2,11 @@ import { PgExplorer } from "../utils/pg";
 
 const PROXY_URL = 'http://localhost:3001';
 
-interface AnthropicResponse {
-  content: Array<{ text: string; type: string }>;
+interface OpenAIResponse {
+  choices: Array<{ message: { content: string } }>;
 }
 
-export class AnthropicService {
+export class OpenAIService {
   static async analyzeCode(prompt: string, currentCode: string): Promise<string> {
     try {
       const currentLang = PgExplorer.getCurrentFileLanguage()?.name || 'Unknown';
@@ -28,19 +28,19 @@ Please analyze the code and respond to the request. If suggesting changes:
 
       console.log('Sending request to proxy server...');
       
-      const response = await fetch(`${PROXY_URL}/api/anthropic`, {
+      const response = await fetch(`${PROXY_URL}/api/openai`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "claude-3-sonnet-20240229",
-          max_tokens: 4096,
-          temperature: 0.7,
+          model: "gpt-4",
           messages: [{ 
             role: "user", 
             content: structuredPrompt 
-          }]
+          }],
+          temperature: 0.7,
+          max_tokens: 4000
         })
       });
 
@@ -50,19 +50,19 @@ Please analyze the code and respond to the request. If suggesting changes:
         throw new Error(`API error: ${errorData?.error || response.statusText}`);
       }
 
-      const data: AnthropicResponse = await response.json();
-      if (!data.content || !data.content[0]) {
+      const data: OpenAIResponse = await response.json();
+      if (!data.choices?.[0]?.message?.content) {
         throw new Error('Invalid response format from API');
       }
       
-      return data.content[0].text;
+      return data.choices[0].message.content;
 
     } catch (error) {
       console.error('Error calling API:', error);
       if (error instanceof Error) {
-        throw new Error(`Claude API error: ${error.message}`);
+        throw new Error(`GPT-4 API error: ${error.message}`);
       }
-      throw new Error('Failed to communicate with Claude API');
+      throw new Error('Failed to communicate with GPT-4 API');
     }
   }
 
@@ -71,4 +71,4 @@ Please analyze the code and respond to the request. If suggesting changes:
     const match = response.match(codeBlockRegex);
     return match ? match[1].trim() : response;
   }
-}
+} 
