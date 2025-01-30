@@ -1,26 +1,35 @@
-import { useEffect, lazy, Suspense, useState } from "react";
+import { useEffect, lazy, Suspense, useState, useCallback } from "react";
 import styled, { css } from "styled-components";
 
 import { SpinnerWithBg } from "../Loading";
 import { Id } from "../../constants";
 import { PgCommon, PgExplorer, PgTheme } from "../../utils/pg";
-import { ChatSidebar } from "./ChatSideBar";
+import { ChatSidebar } from "./ChatSidebar/ChatSideBar";
+import type * as Monaco from 'monaco-editor';
+import { ChatErrorBoundary } from './ChatSidebar/ErrorBoundary';
 
 const Home = lazy(() => import("./Home"));
-const Monaco = lazy(() => import("./Monaco"));
+const MonacoEditor = lazy(() => import("./Monaco"));
 
 export const Editor = () => {
   const [showHome, setShowHome] = useState<boolean>();
+  const [editor, setEditor] = useState<Monaco.editor.IStandaloneCodeEditor>();
+
+  const getCurrentCode = useCallback(() => {
+    if (!editor) return "";
+    return editor.getValue();
+  }, [editor]);
+
+  const handleReplaceCode = useCallback((newCode: string) => {
+    if (!editor) return;
+    editor.setValue(newCode);
+  }, [editor]);
 
   // Decide which editor to show
   useEffect(() => {
     const { dispose } = PgExplorer.onNeedRender(
-      PgCommon.debounce(
-        () => setShowHome(!PgExplorer.tabs.length),
-        { delay: 50 } // To fix flickering on workspace deletion
-      )
+      PgCommon.debounce(() => setShowHome(!PgExplorer.tabs.length), { delay: 50 })
     );
-
     return dispose;
   }, []);
 
@@ -33,22 +42,31 @@ export const Editor = () => {
 
     return () => clearInterval(saveMetadataIntervalId);
   }, []);
-  const handleReplaceCode = ()=>{
-    
-  }
 
   if (showHome === undefined) return null;
 
   return (
     <Suspense fallback={<SpinnerWithBg loading size="2rem" />}>
-      <Wrapper>{showHome ? <Home /> : <EditorContainer>
+      <Wrapper>
+        {showHome ? (
+          <Home />
+        ) : (
+          <EditorContainer>
             <MonacoEditorContainer>
-              {/* Replace <Monaco /> with your chosen editor component */}
-              <Monaco /* pass ref or something to capture editor instance */ />
+              <MonacoEditor 
+                onMount={(editor: Monaco.editor.IStandaloneCodeEditor) => setEditor(editor)} 
+              />
             </MonacoEditorContainer>
 
-            <ChatSidebar onReplaceCode={handleReplaceCode} />
-          </EditorContainer>}</Wrapper>
+            <ChatErrorBoundary>
+              <ChatSidebar 
+                onReplaceCode={handleReplaceCode}
+                getCurrentCode={getCurrentCode}
+              />
+            </ChatErrorBoundary>
+          </EditorContainer>
+        )}
+      </Wrapper>
     </Suspense>
   );
 };

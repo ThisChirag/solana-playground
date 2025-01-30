@@ -21,7 +21,11 @@ import {
   useSendAndReceiveCustomEvent,
 } from "../../../hooks";
 
-const Monaco = () => {
+interface MonacoProps {
+  onMount?: (editor: monaco.editor.IStandaloneCodeEditor) => void;
+}
+
+const Monaco = ({ onMount }: MonacoProps) => {
   const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor>();
   const [isThemeSet, setIsThemeSet] = useState(false);
 
@@ -718,6 +722,11 @@ const Monaco = () => {
 
     return dispose;
   }, [editor]);
+
+  useEffect(() => {
+    if (!editor || !onMount) return;
+    onMount(editor);
+  }, [editor, onMount]);
 
   return (
     <SpinnerWithBg loading={!isThemeSet} size="2rem">
