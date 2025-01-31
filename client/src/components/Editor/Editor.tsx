@@ -1,44 +1,33 @@
-import { useEffect, lazy, Suspense, useState, useCallback, useRef } from "react";
+import { useEffect, lazy, Suspense, useState, useCallback } from "react";
 import styled, { css } from "styled-components";
 
 import { SpinnerWithBg } from "../Loading";
 import { Id } from "../../constants";
 import { PgCommon, PgExplorer, PgTheme } from "../../utils/pg";
 import { ChatSidebar } from "./ChatSidebar/ChatSideBar";
-import type * as Monaco from 'monaco-editor';
-import { ChatErrorBoundary } from './ChatSidebar/ErrorBoundary';
+import { ChatErrorBoundary } from "./ChatSidebar/ErrorBoundary";
 import CodeMirror from "./CodeMirror/CodeMirror";
-import { Edit as MessageIcon, Close as CloseIcon } from "../../components/Icons";
-import { EditorView } from "@codemirror/view";
+import { Edit as MessageIcon } from "../../components/Icons";
 
 const Home = lazy(() => import("./Home"));
-const MonacoEditor = lazy(() => import("./Monaco"));
 
 export const Editor = () => {
   const [showHome, setShowHome] = useState<boolean>();
-  const [editor, setEditor] = useState<Monaco.editor.IStandaloneCodeEditor>();
+  // We'll keep code in state and pass it to CodeMirror as a controlled value
   const [code, setCode] = useState("");
   const [currentFilePath, setCurrentFilePath] = useState("");
   const [chatWidth, setChatWidth] = useState(400);
   const [isChatVisible, setIsChatVisible] = useState(true);
-  const editorRef = useRef<EditorView | null>(null);
 
+  // Provide the current code to the ChatSidebar
   const getCurrentCode = useCallback(() => code, [code]);
 
+  // When ChatSidebar wants to replace code, we update state
   const handleReplaceCode = useCallback((newCode: string) => {
     setCode(newCode);
-    if (editorRef.current) {
-      editorRef.current.dispatch({
-        changes: {
-          from: 0,
-          to: editorRef.current.state.doc.length,
-          insert: newCode
-        }
-      });
-    }
   }, []);
 
-  // Decide which editor to show
+  // Decide which view to show (Home or Editor)
   useEffect(() => {
     const { dispose } = PgExplorer.onNeedRender(
       PgCommon.debounce(() => setShowHome(!PgExplorer.tabs.length), { delay: 50 })
@@ -56,8 +45,8 @@ export const Editor = () => {
     return () => clearInterval(saveMetadataIntervalId);
   }, []);
 
+  // Listen for file-open events in PgExplorer
   useEffect(() => {
-    // Subscribe to file changes
     const { dispose } = PgExplorer.onDidOpenFile((file) => {
       if (file) {
         setCurrentFilePath(file.path);
@@ -68,11 +57,14 @@ export const Editor = () => {
     return () => dispose();
   }, []);
 
+  // Toggle the chat sidebar open/close
   const toggleChat = useCallback(() => {
-    setIsChatVisible(prev => !prev);
+    setIsChatVisible((prev) => !prev);
   }, []);
 
-  if (showHome === undefined) return null;
+  if (showHome === undefined) {
+    return null; // Not yet decided
+  }
 
   return (
     <Suspense fallback={<SpinnerWithBg loading size="2rem" />}>
@@ -81,22 +73,32 @@ export const Editor = () => {
           <Home />
         ) : (
           <StyledEditorContainer>
-            <StyledEditorContent style={{ width: isChatVisible ? `calc(100% - ${chatWidth}px)` : '100%' }}>
-              <CodeMirror />
+            <StyledEditorContent
+              style={{ width: isChatVisible ? `calc(100% - ${chatWidth}px)` : "100%" }}
+            >
+              {/*
+                Use the CodeMirror component in a controlled way:
+                - Pass `code` (the current editor text from state)
+                - Pass `onChange` so we update state whenever user types
+              */}
+              <CodeMirror code={code} onChange={setCode} />
+
               <StyledChatToggleButton onClick={toggleChat} $isVisible={isChatVisible}>
                 <MessageIcon />
               </StyledChatToggleButton>
             </StyledEditorContent>
-            
+
             {isChatVisible && (
-              <ChatSidebar 
-                onReplaceCode={handleReplaceCode}
-                getCurrentCode={getCurrentCode}
-                currentFilePath={currentFilePath}
-                width={chatWidth}
-                onWidthChange={setChatWidth}
-                onClose={() => setIsChatVisible(false)}
-              />
+              <ChatErrorBoundary>
+                <ChatSidebar
+                  onReplaceCode={handleReplaceCode}
+                  getCurrentCode={getCurrentCode}
+                  currentFilePath={currentFilePath}
+                  width={chatWidth}
+                  onWidthChange={setChatWidth}
+                  onClose={() => setIsChatVisible(false)}
+                />
+              </ChatErrorBoundary>
             )}
           </StyledEditorContainer>
         )}
@@ -105,23 +107,13 @@ export const Editor = () => {
   );
 };
 
+/* -- STYLES -- */
 const Wrapper = styled.div`
   ${({ theme }) => css`
     width: 100%;
     height: 100%;
     overflow: auto;
 
-    /**
-     * Changing the home background only changes the part that is in view and
-     * the remaining parts still have 'main.default.bg' which causes problem if
-     * they are different. This selector selects the current element when home
-     * is in view and sets the background to 'home.default.bg'.
-     *
-     * The reason we are setting the background in this element is also partly
-     * due to Monaco editor's incompatibility with background-image property.
-     * We are able to solve this problem by seting the editor's background to
-     * transparent and set this(wrapper) element's background to background-image.
-     */
     &:has(> #${Id.HOME}) {
       background: ${theme.views.main.primary.home.default.bg ??
       theme.views.main.default.bg};

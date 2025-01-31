@@ -29,9 +29,14 @@ export const ChatSidebar = ({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [useCodeContext, setUseCodeContext] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState("");
   const [history, setHistory] = useState<ChatHistory[]>([]);
+
+  // Copied feedback states
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  // Added state for showing a checkmark after applying code
+  const [appliedIndex, setAppliedIndex] = useState<number | null>(null);
+
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<HTMLDivElement>(null);
   const startResizeX = useRef<number>(0);
@@ -57,13 +62,13 @@ export const ChatSidebar = ({
     };
 
     if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
     }
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isResizing, onWidthChange]);
 
@@ -77,9 +82,7 @@ export const ChatSidebar = ({
 
   const handleClearChat = useCallback(() => {
     if (currentFilePath) {
-      // Clear from localStorage
       ChatStorageManager.clearHistory(currentFilePath);
-      // Clear from state
       setHistory([]);
     }
   }, [currentFilePath]);
@@ -90,20 +93,25 @@ export const ChatSidebar = ({
     setTimeout(() => setCopiedIndex(null), 2000);
   }, []);
 
-  const handleApplyCode = useCallback((code: string) => {
+  // Updated to accept `index` for feedback
+  const handleApplyCode = useCallback((code: string, index: number) => {
     if (code && code.trim()) {
       onReplaceCode(code.trim());
+      // Show tick for 1 second
+      setAppliedIndex(index);
+      setTimeout(() => setAppliedIndex(null), 1000);
     }
   }, [onReplaceCode]);
 
   const formatMessage = useCallback((content: string) => {
-    const parts = content.split('```');
+    const parts = content.split("```");
     return parts.map((part, index) => {
+      // Even index => normal text, odd index => code block
       if (index % 2 === 0) {
         return <TextContent key={index}>{part}</TextContent>;
       } else {
-        const [language, ...codeParts] = part.split('\n');
-        const code = codeParts.join('\n').trim();
+        const [language, ...codeParts] = part.split("\n");
+        const code = codeParts.join("\n").trim();
         return (
           <CodeBlock key={index}>
             <CodeHeader>
@@ -116,10 +124,10 @@ export const ChatSidebar = ({
                   {copiedIndex === index ? <CheckIcon /> : <CopyIcon />}
                 </ActionButton>
                 <ActionButton 
-                  onClick={() => handleApplyCode(code)}
-                  title="Apply to editor"
+                  onClick={() => handleApplyCode(code, index)}
+                  title="Apply code to Editor"
                 >
-                  Apply
+                  {appliedIndex === index ? <CheckIcon /> : "Apply"}
                 </ActionButton>
               </CodeActions>
             </CodeHeader>
@@ -128,7 +136,7 @@ export const ChatSidebar = ({
         );
       }
     });
-  }, [handleCopyCode, handleApplyCode, copiedIndex]);
+  }, [handleCopyCode, handleApplyCode, copiedIndex, appliedIndex]);
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
@@ -154,17 +162,12 @@ export const ChatSidebar = ({
 
   return (
     <Container style={{ width: `${width}px` }}>
-      <ResizeHandle
-        ref={resizeRef}
-        onMouseDown={handleMouseDown}
-      />
+      <ResizeHandle ref={resizeRef} onMouseDown={handleMouseDown} />
       <Header>
         <HeaderContent>
           <HeaderTitle>Solana PG Assistant</HeaderTitle>
           <HeaderActions>
-            <ClearButton onClick={handleClearChat}>
-              Clear Chat
-            </ClearButton>
+            <ClearButton onClick={handleClearChat}>Clear Chat</ClearButton>
             <CloseButton onClick={onClose}>
               <CloseIcon />
             </CloseButton>
@@ -185,9 +188,7 @@ export const ChatSidebar = ({
               <Avatar>
                 <AIAvatar>AI</AIAvatar>
               </Avatar>
-              <MessageContent>
-                {formatMessage(entry.response)}
-              </MessageContent>
+              <MessageContent>{formatMessage(entry.response)}</MessageContent>
             </AIMessage>
           </MessageGroup>
         ))}
@@ -197,7 +198,11 @@ export const ChatSidebar = ({
               <Avatar>
                 <AIAvatar>AI</AIAvatar>
               </Avatar>
-              <LoadingDots><span>.</span><span>.</span><span>.</span></LoadingDots>
+              <LoadingDots>
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </LoadingDots>
             </AIMessage>
           </LoadingMessage>
         )}
@@ -228,6 +233,7 @@ export const ChatSidebar = ({
   );
 };
 
+/* -- STYLES -- */
 const Container = styled.div`
   display: flex;
   flex-direction: column;
@@ -250,6 +256,24 @@ const Container = styled.div`
   }
 `;
 
+const ResizeHandle = styled.div`
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 10;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.1);
+  }
+
+  &:active {
+    background: rgba(0, 0, 0, 0.2);
+  }
+`;
+
 const Header = styled.div`
   padding: 1rem;
   border-bottom: 1px solid ${({ theme }) => theme.colors.default.border};
@@ -263,6 +287,12 @@ const HeaderContent = styled.div`
 
 const HeaderTitle = styled.div`
   font-weight: bold;
+`;
+
+const HeaderActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
 `;
 
 const ClearButton = styled.button`
@@ -281,6 +311,27 @@ const ClearButton = styled.button`
 
   &:active {
     transform: translateY(1px);
+  }
+`;
+
+const CloseButton = styled.button`
+  padding: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+
+  &:hover {
+    background: ${({ theme }) => theme.colors.default.bgSecondary};
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: ${({ theme }) => theme.colors.default.textPrimary};
   }
 `;
 
@@ -318,6 +369,32 @@ const Avatar = styled.div`
   font-size: 0.8rem;
   font-weight: bold;
   min-width: 30px;
+`;
+
+const UserAvatar = styled.div`
+  background: ${({ theme }) => theme.colors.default.primary};
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+`;
+
+const AIAvatar = styled.div`
+  background: #10a37f;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
 `;
 
 const MessageContent = styled.div`
@@ -384,7 +461,7 @@ const Pre = styled.pre`
   white-space: pre-wrap;
   word-break: break-word;
   max-width: 100%;
-  
+
   code {
     display: block;
     width: 100%;
@@ -425,86 +502,15 @@ const SendButton = styled.button`
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
-  
+
   &:hover:not(:disabled) {
     opacity: 0.9;
   }
-`;
-
-const ResizeHandle = styled.div`
-  position: absolute;
-  left: -5px;
-  top: 0;
-  bottom: 0;
-  width: 10px;
-  cursor: col-resize;
-  z-index: 10;
-
-  &:hover {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  &:active {
-    background: rgba(0, 0, 0, 0.2);
-  }
-`;
-
-const CloseButton = styled.button`
-  padding: 6px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-
-  &:hover {
-    background: ${({ theme }) => theme.colors.default.bgSecondary};
-  }
-
-  svg {
-    width: 16px;
-    height: 16px;
-    color: ${({ theme }) => theme.colors.default.textPrimary};
-  }
-`;
-
-const HeaderActions = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-`;
-
-const UserAvatar = styled.div`
-  background: ${({ theme }) => theme.colors.default.primary};
-  color: white;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
-`;
-
-const AIAvatar = styled.div`
-  background: #10a37f;
-  color: white;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
 `;
 
 const LoadingMessage = styled.div`
@@ -536,5 +542,3 @@ const LoadingDots = styled.div`
     }
   }
 `;
-
-export default ChatSidebar;
