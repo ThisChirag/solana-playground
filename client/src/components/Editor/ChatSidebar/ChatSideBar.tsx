@@ -1,242 +1,296 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import styled from "styled-components";
 import { OpenAIService } from "../../../services/openai";
+import { ChatStorageManager } from "../../../utils/storage";
+import type { ChatHistory } from "../../../utils/storage";
+import { Copy as CopyIcon, Checkmark as CheckIcon, Close as CloseIcon } from "../../../components/Icons";
 
 interface ChatSidebarProps {
   onReplaceCode: (code: string) => void;
   getCurrentCode: () => string;
+  currentFilePath: string;
+  width?: number;
+  onWidthChange?: (width: number) => void;
+  onClose: () => void;
 }
 
-export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps) => {
+const MIN_WIDTH = 300;
+const MAX_WIDTH = 800;
+const DEFAULT_WIDTH = 400;
+
+export const ChatSidebar = ({ 
+  onReplaceCode, 
+  getCurrentCode, 
+  currentFilePath,
+  width = DEFAULT_WIDTH,
+  onWidthChange,
+  onClose
+}: ChatSidebarProps) => {
   const [input, setInput] = useState("");
-  const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [useCodeContext, setUseCodeContext] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("");
-  const [history, setHistory] = useState<Array<{prompt: string, response: string}>>([]);
+  const [history, setHistory] = useState<ChatHistory[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef<HTMLDivElement>(null);
+  const startResizeX = useRef<number>(0);
+  const startWidth = useRef<number>(0);
 
-  // Loading messages in sequence
-  const loadingMessages = [
-    "Assistant is thinking",
-    "Analyzing your code",
-    "Processing your request",
-    "Generating response"
-  ];
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    setIsResizing(true);
+    startResizeX.current = e.clientX;
+    startWidth.current = width || 400;
+  }, [width]);
 
   useEffect(() => {
-    if (loading) {
-      // Set up sequential messages with fixed timing
-      const messageTimings = [0, 1000, 2000, 3000]; // Timing for each message in ms
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
       
-      // Clear any existing timeouts
-      const timeouts: NodeJS.Timeout[] = [];
-      
-      // Schedule each message to appear once
-      loadingMessages.forEach((message, index) => {
-        const timeout = setTimeout(() => {
-          setLoadingMessage(message);
-        }, messageTimings[index]);
-        timeouts.push(timeout);
-      });
+      const diff = startResizeX.current - e.clientX;
+      const newWidth = Math.min(Math.max(startWidth.current + diff, MIN_WIDTH), MAX_WIDTH);
+      onWidthChange?.(newWidth);
+    };
 
-      // Cleanup function
-      return () => {
-        timeouts.forEach(timeout => clearTimeout(timeout));
-      };
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
     }
-  }, [loading]);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, onWidthChange]);
+
+  // Load chat history when component mounts or file changes
+  useEffect(() => {
+    if (currentFilePath) {
+      const savedHistory = ChatStorageManager.loadHistory(currentFilePath);
+      setHistory(savedHistory);
+    }
+  }, [currentFilePath]);
+
+  const handleClearChat = useCallback(() => {
+    if (currentFilePath) {
+      // Clear from localStorage
+      ChatStorageManager.clearHistory(currentFilePath);
+      // Clear from state
+      setHistory([]);
+    }
+  }, [currentFilePath]);
+
+  const handleCopyCode = useCallback((code: string, index: number) => {
+    navigator.clipboard.writeText(code);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  }, []);
+
+  const handleApplyCode = useCallback((code: string) => {
+    if (code && code.trim()) {
+      onReplaceCode(code.trim());
+    }
+  }, [onReplaceCode]);
+
+  const formatMessage = useCallback((content: string) => {
+    const parts = content.split('```');
+    return parts.map((part, index) => {
+      if (index % 2 === 0) {
+        return <TextContent key={index}>{part}</TextContent>;
+      } else {
+        const [language, ...codeParts] = part.split('\n');
+        const code = codeParts.join('\n').trim();
+        return (
+          <CodeBlock key={index}>
+            <CodeHeader>
+              <Language>{language}</Language>
+              <CodeActions>
+                <ActionButton 
+                  onClick={() => handleCopyCode(code, index)}
+                  title="Copy code"
+                >
+                  {copiedIndex === index ? <CheckIcon /> : <CopyIcon />}
+                </ActionButton>
+                <ActionButton 
+                  onClick={() => handleApplyCode(code)}
+                  title="Apply to editor"
+                >
+                  Apply
+                </ActionButton>
+              </CodeActions>
+            </CodeHeader>
+            <Pre>{code}</Pre>
+          </CodeBlock>
+        );
+      }
+    });
+  }, [handleCopyCode, handleApplyCode, copiedIndex]);
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
     
     setLoading(true);
-    setLoadingMessage(loadingMessages[0]);
-    
     try {
-      const currentCode = useCodeContext ? getCurrentCode() : "";
       const result = await OpenAIService.analyzeCode(
         input, 
-        currentCode, 
+        getCurrentCode(), 
         useCodeContext,
         history
       );
-      setAnswer(result);
-      setHistory(prev => [...prev, { prompt: input, response: result }]);
+      
+      const newHistoryEntry = { prompt: input, response: result };
+      setHistory(prev => [...prev, newHistoryEntry]);
+      ChatStorageManager.saveHistory(currentFilePath, [...history, newHistoryEntry]);
       setInput("");
     } catch (error) {
       console.error("GPT-4 API failed:", error);
-      setAnswer("Error: Failed to get response from GPT-4. Please try again.");
     }
     setLoading(false);
-  }, [input, getCurrentCode, useCodeContext, history]);
-
-  const handleKeyPress = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      handleSubmit();
-    }
-  }, [handleSubmit]);
-
-  const handleApplyCode = useCallback(() => {
-    const codeToApply = OpenAIService.extractCodeBlock(answer);
-    onReplaceCode(codeToApply);
-  }, [answer, onReplaceCode]);
-
-  const detectLanguage = (code: string): string => {
-    if (code.includes('fn ') || code.includes('impl ') || code.includes('pub struct')) {
-      return 'RUST';
-    }
-    if (code.includes('function ') || code.includes('const ') || code.includes('let ')) {
-      return 'JAVASCRIPT';
-    }
-    if (code.includes('def ') || code.includes('class ') || code.includes('import ')) {
-      return 'PYTHON';
-    }
-    if (code.includes('public class') || code.includes('private ') || code.includes('void ')) {
-      return 'JAVA';
-    }
-    return 'CODE'; // Default label if language can't be detected
-  };
-
-  const renderCodeBlock = (code: string) => {
-    const language = detectLanguage(code);
-    return (
-      <CodeBlockContainer>
-        <CodeHeader>
-          <LanguageLabel>{language}</LanguageLabel>
-          <ButtonGroup>
-            <CodeButton onClick={() => navigator.clipboard.writeText(code)}>
-              <CopyIcon /> Copy code
-            </CodeButton>
-            <CodeButton onClick={() => onReplaceCode(code)}>
-              <ApplyIcon /> Apply to Editor
-            </CodeButton>
-          </ButtonGroup>
-        </CodeHeader>
-        <CodeContent>
-          <pre>
-            <code>{code}</code>
-          </pre>
-        </CodeContent>
-      </CodeBlockContainer>
-    );
-  };
-
-  const renderResponse = (response: string) => {
-    const parts = response.split(/(```[\s\S]*?```)/g);
-    return parts.map((part, index) => {
-      if (part.startsWith('```') && part.endsWith('```')) {
-        const code = part.slice(3, -3).replace(/^[a-z]+\n/, ''); // Remove language identifier
-        return renderCodeBlock(code);
-      }
-      return <ResponseText key={index}>{part}</ResponseText>;
-    });
-  };
+  }, [input, getCurrentCode, useCodeContext, history, currentFilePath]);
 
   return (
-    <SidebarContainer>
-      <Header>Solana PG Assistant</Header>
-      <ChatContainer>
-        <MessagesContainer>
-          {history.map((item, index) => (
-            <MessageGroup key={index}>
-              <UserMessage>
-                <AvatarContainer>
-                  <Avatar>👤</Avatar>
-                  <SenderLabel>You</SenderLabel>
-                </AvatarContainer>
-                <MessageContent>
-                  <MessageText>{item.prompt}</MessageText>
-                </MessageContent>
-              </UserMessage>
-              
-              <AIMessage>
-                <AvatarContainer>
-                  <Avatar>🤖</Avatar>
-                  <SenderLabel>AI</SenderLabel>
-                </AvatarContainer>
-                <MessageContent>
-                  {item.response.split(/(```[\s\S]*?```)/g).map((part, idx) => {
-                    if (part.startsWith('```') && part.endsWith('```')) {
-                      const code = part.slice(3, -3).replace(/^[a-z]+\n/, '');
-                      return renderCodeBlock(code);
-                    }
-                    return <MessageText key={idx}>{part}</MessageText>;
-                  })}
-                </MessageContent>
-              </AIMessage>
-            </MessageGroup>
-          ))}
-          {loading && (
-            <LoadingMessage>
-              <AIMessage>
-                <AvatarContainer>
-                  <Avatar>🤖</Avatar>
-                  <SenderLabel>AI</SenderLabel>
-                </AvatarContainer>
-                <MessageContent>
-                  <LoadingText>
-                    {loadingMessage}
-                    <LoadingDots><span>.</span><span>.</span><span>.</span></LoadingDots>
-                  </LoadingText>
-                </MessageContent>
-              </AIMessage>
-            </LoadingMessage>
-          )}
-        </MessagesContainer>
-      </ChatContainer>
+    <Container style={{ width: `${width}px` }}>
+      <ResizeHandle
+        ref={resizeRef}
+        onMouseDown={handleMouseDown}
+      />
+      <Header>
+        <HeaderContent>
+          <HeaderTitle>Solana PG Assistant</HeaderTitle>
+          <HeaderActions>
+            <ClearButton onClick={handleClearChat}>
+              Clear Chat
+            </ClearButton>
+            <CloseButton onClick={onClose}>
+              <CloseIcon />
+            </CloseButton>
+          </HeaderActions>
+        </HeaderContent>
+      </Header>
+      
+      <ChatHistoryContainer>
+        {history.map((entry, index) => (
+          <MessageGroup key={index}>
+            <UserMessage>
+              <Avatar>
+                <UserAvatar>You</UserAvatar>
+              </Avatar>
+              <MessageContent>{entry.prompt}</MessageContent>
+            </UserMessage>
+            <AIMessage>
+              <Avatar>
+                <AIAvatar>AI</AIAvatar>
+              </Avatar>
+              <MessageContent>
+                {formatMessage(entry.response)}
+              </MessageContent>
+            </AIMessage>
+          </MessageGroup>
+        ))}
+        {loading && (
+          <LoadingMessage>
+            <AIMessage>
+              <Avatar>
+                <AIAvatar>AI</AIAvatar>
+              </Avatar>
+              <LoadingDots><span>.</span><span>.</span><span>.</span></LoadingDots>
+            </AIMessage>
+          </LoadingMessage>
+        )}
+      </ChatHistoryContainer>
 
-      <InputContainer>
-        <ContextToggle>
-          <ToggleCheckbox
+      <InputArea>
+        <CodeContextToggle>
+          <input
             type="checkbox"
             checked={useCodeContext}
             onChange={(e) => setUseCodeContext(e.target.checked)}
-            id="context-toggle"
           />
-          <ToggleLabel htmlFor="context-toggle">
-            Include Current Code Context
-          </ToggleLabel>
-        </ContextToggle>
-        <StyledTextArea
+          <span>Include Current Code Context</span>
+        </CodeContextToggle>
+        
+        <TextArea
           value={input}
-          onChange={ev => setInput(ev.target.value)}
-          placeholder={useCodeContext ? "Ask about the code or request changes..." : "Ask a general question..."}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask about the code or request changes..."
           disabled={loading}
         />
+        
         <SendButton onClick={handleSubmit} disabled={loading || !input.trim()}>
-          {loading ? "Loading..." : "Send"}
+          {loading ? "Sending..." : "Send"}
         </SendButton>
-      </InputContainer>
-    </SidebarContainer>
+      </InputArea>
+    </Container>
   );
 };
 
-// Styled components
-const SidebarContainer = styled.div`
+const Container = styled.div`
   display: flex;
   flex-direction: column;
   height: 100%;
   background: ${({ theme }) => theme.colors.default.bgPrimary};
+  color: ${({ theme }) => theme.colors.default.textPrimary};
+  position: relative;
+  min-width: ${MIN_WIDTH}px;
+  max-width: ${MAX_WIDTH}px;
+  border-left: 1px solid ${({ theme }) => theme.colors.default.border};
+  animation: slideIn 0.3s ease;
+
+  @keyframes slideIn {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
 `;
 
 const Header = styled.div`
   padding: 1rem;
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.default.textPrimary};
   border-bottom: 1px solid ${({ theme }) => theme.colors.default.border};
 `;
 
-const ChatContainer = styled.div`
+const HeaderContent = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+`;
+
+const HeaderTitle = styled.div`
+  font-weight: bold;
+`;
+
+const ClearButton = styled.button`
+  padding: 0.5rem 1rem;
+  background: transparent;
+  color: ${({ theme }) => theme.colors.default.textPrimary};
+  border: 1px solid ${({ theme }) => theme.colors.default.border};
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: ${({ theme }) => theme.colors.default.bgSecondary};
+  }
+
+  &:active {
+    transform: translateY(1px);
+  }
+`;
+
+const ChatHistoryContainer = styled.div`
   flex: 1;
   overflow-y: auto;
   padding: 1rem;
-`;
-
-const MessagesContainer = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1rem;
 `;
 
 const MessageGroup = styled.div`
@@ -247,116 +301,97 @@ const MessageGroup = styled.div`
 
 const Message = styled.div`
   display: flex;
-  gap: 1rem;
-  padding: 1rem;
-  border-radius: 8px;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 4px;
 `;
 
 const UserMessage = styled(Message)`
-  background: transparent;
+  background: ${({ theme }) => theme.colors.default.bgSecondary};
 `;
 
 const AIMessage = styled(Message)`
   background: ${({ theme }) => theme.colors.default.bgSecondary};
 `;
 
-const AvatarContainer = styled.div`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 40px;
-`;
-
 const Avatar = styled.div`
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  background: ${({ theme }) => theme.colors.default.bgPrimary};
-`;
-
-const SenderLabel = styled.div`
-  font-size: 0.75rem;
-  color: ${({ theme }) => theme.colors.default.textSecondary};
+  font-size: 0.8rem;
+  font-weight: bold;
+  min-width: 30px;
 `;
 
 const MessageContent = styled.div`
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-`;
-
-const MessageText = styled.div`
-  color: ${({ theme }) => theme.colors.default.textPrimary};
-  line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+  overflow-x: hidden;
 `;
 
-const CodeBlockContainer = styled.div`
-  margin: 0.5rem 0;
+const TextContent = styled.div`
+  margin-bottom: 1rem;
+`;
+
+const CodeBlock = styled.div`
+  margin: 1rem 0;
   background: ${({ theme }) => theme.colors.default.bgPrimary};
   border: 1px solid ${({ theme }) => theme.colors.default.border};
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: 4px;
+  max-width: 100%;
 `;
 
 const CodeHeader = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.75rem 1rem;
+  padding: 0.5rem;
   background: ${({ theme }) => theme.colors.default.bgSecondary};
   border-bottom: 1px solid ${({ theme }) => theme.colors.default.border};
 `;
 
-const LanguageLabel = styled.span`
+const Language = styled.span`
+  font-size: 0.8rem;
   color: ${({ theme }) => theme.colors.default.textSecondary};
-  font-size: 0.9rem;
-  text-transform: uppercase;
 `;
 
-const ButtonGroup = styled.div`
+const CodeActions = styled.div`
   display: flex;
   gap: 0.5rem;
 `;
 
-const CodeButton = styled.button`
+const ActionButton = styled.button`
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  color: ${({ theme }) => theme.colors.default.textPrimary};
+  border: 1px solid ${({ theme }) => theme.colors.default.border};
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border: none;
-  border-radius: 4px;
-  background: ${({ theme }) => theme.colors.default.primary};
-  color: white;
-  font-size: 0.9rem;
-  cursor: pointer;
+  gap: 0.25rem;
 
   &:hover {
-    opacity: 0.9;
+    background: ${({ theme }) => theme.colors.default.bgSecondary};
   }
 `;
 
-const CodeContent = styled.div`
+const Pre = styled.pre`
+  margin: 0;
   padding: 1rem;
   overflow-x: auto;
-
-  pre {
-    margin: 0;
-    code {
-      font-family: 'Fira Code', monospace;
-      font-size: 0.9rem;
-      line-height: 1.5;
-    }
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+  
+  code {
+    display: block;
+    width: 100%;
   }
 `;
 
-const InputContainer = styled.div`
+const InputArea = styled.div`
   padding: 1rem;
   border-top: 1px solid ${({ theme }) => theme.colors.default.border};
   display: flex;
@@ -364,77 +399,121 @@ const InputContainer = styled.div`
   gap: 0.5rem;
 `;
 
-const StyledTextArea = styled.textarea`
+const CodeContextToggle = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  user-select: none;
+`;
+
+const TextArea = styled.textarea`
   width: 100%;
   min-height: 100px;
-  padding: 0.75rem;
-  border-radius: 8px;
+  padding: 0.5rem;
   border: 1px solid ${({ theme }) => theme.colors.default.border};
+  border-radius: 4px;
   background: ${({ theme }) => theme.colors.default.bgSecondary};
   color: ${({ theme }) => theme.colors.default.textPrimary};
   resize: vertical;
-  font-size: 0.9rem;
-  line-height: 1.5;
-
-  &:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-  }
 `;
 
 const SendButton = styled.button`
-  padding: 0.75rem;
-  border: none;
-  border-radius: 8px;
+  padding: 0.5rem 1rem;
   background: ${({ theme }) => theme.colors.default.primary};
   color: white;
-  font-weight: 500;
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
-
+  
   &:disabled {
-    opacity: 0.7;
+    opacity: 0.5;
     cursor: not-allowed;
   }
-
+  
   &:hover:not(:disabled) {
     opacity: 0.9;
   }
 `;
 
-// Optional: Add these icons if you want to use them
-const CopyIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
-  </svg>
-);
+const ResizeHandle = styled.div`
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 10;
 
-const ApplyIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" />
-  </svg>
-);
+  &:hover {
+    background: rgba(0, 0, 0, 0.1);
+  }
 
-const ResponseText = styled.pre`
-  margin: 0;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  color: ${({ theme }) => theme.colors.default.textSecondary};
+  &:active {
+    background: rgba(0, 0, 0, 0.2);
+  }
+`;
+
+const CloseButton = styled.button`
+  padding: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+
+  &:hover {
+    background: ${({ theme }) => theme.colors.default.bgSecondary};
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: ${({ theme }) => theme.colors.default.textPrimary};
+  }
+`;
+
+const HeaderActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const UserAvatar = styled.div`
+  background: ${({ theme }) => theme.colors.default.primary};
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+`;
+
+const AIAvatar = styled.div`
+  background: #10a37f;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
 `;
 
 const LoadingMessage = styled.div`
-  margin-top: 1rem;
-`;
-
-const LoadingText = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: ${({ theme }) => theme.colors.default.textSecondary};
+  opacity: 0.7;
 `;
 
 const LoadingDots = styled.div`
   display: flex;
-  gap: 2px;
+  gap: 4px;
   
   span {
     animation: loadingDots 1.4s infinite;
@@ -447,28 +526,15 @@ const LoadingDots = styled.div`
       animation-delay: 0.4s;
     }
   }
-  
+
   @keyframes loadingDots {
-    0%, 80%, 100% { opacity: 0; }
-    40% { opacity: 1; }
+    0%, 100% {
+      opacity: 0.2;
+    }
+    50% {
+      opacity: 1;
+    }
   }
 `;
 
-const ContextToggle = styled.div`
-  display: flex;
-  align-items: center;
-  margin-bottom: 0.5rem;
-  padding: 0 0.5rem;
-`;
-
-const ToggleCheckbox = styled.input`
-  margin-right: 0.5rem;
-  cursor: pointer;
-`;
-
-const ToggleLabel = styled.label`
-  color: ${({ theme }) => theme.colors.default.textSecondary};
-  font-size: 0.9rem;
-  cursor: pointer;
-  user-select: none;
-`;
+export default ChatSidebar;
