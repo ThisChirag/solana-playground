@@ -1,9 +1,15 @@
 import { PgExplorer } from "../utils/pg";
 
 const PROXY_URL = 'http://localhost:3001';
+const MAX_HISTORY_PAIRS = 4; // Keep last 4 pairs of messages
 
 interface OpenAIResponse {
   choices: Array<{ message: { content: string } }>;
+}
+
+interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
 }
 
 export class OpenAIService {
@@ -46,11 +52,34 @@ RESPONSE FORMAT:
   static async analyzeCode(
     prompt: string,
     currentCode: string,
-    useCodeContext: boolean = true
+    useCodeContext: boolean = true,
+    previousMessages: Array<{prompt: string, response: string}> = []
   ): Promise<string> {
     try {
       const currentLang = PgExplorer.getCurrentFileLanguage()?.name || 'Unknown';
       
+      // Convert chat history to OpenAI message format
+      const historyMessages: ChatMessage[] = previousMessages
+        .slice(-MAX_HISTORY_PAIRS) // Keep only recent messages
+        .flatMap(({ prompt, response }) => [
+          { role: "user", content: prompt },
+          { role: "assistant", content: response }
+        ]);
+
+      // Construct current user message
+      const currentUserMessage = useCodeContext ? `
+The current file is in ${currentLang}.
+
+Current code:
+\`\`\`${currentLang}
+${currentCode}
+\`\`\`
+
+User request: ${prompt}
+
+Please analyze the code and respond to the request.`.trim()
+        : `User request: ${prompt}`;
+
       const response = await fetch(`${PROXY_URL}/api/openai`, {
         method: 'POST',
         headers: {
@@ -63,20 +92,10 @@ RESPONSE FORMAT:
               role: "system", 
               content: this.getSystemPrompt(currentLang)
             },
+            ...historyMessages,
             {
               role: "user",
-              content: useCodeContext ? `
-The current file is in ${currentLang}.
-
-Current code:
-\`\`\`${currentLang}
-${currentCode}
-\`\`\`
-
-User request: ${prompt}
-
-Please analyze the code and respond to the request.`.trim()
-              : `User request: ${prompt}`
+              content: currentUserMessage
             }
           ],
           temperature: 0.7,

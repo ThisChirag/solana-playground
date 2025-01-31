@@ -54,7 +54,12 @@ export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps)
     
     try {
       const currentCode = useCodeContext ? getCurrentCode() : "";
-      const result = await OpenAIService.analyzeCode(input, currentCode, useCodeContext);
+      const result = await OpenAIService.analyzeCode(
+        input, 
+        currentCode, 
+        useCodeContext,
+        history
+      );
       setAnswer(result);
       setHistory(prev => [...prev, { prompt: input, response: result }]);
       setInput("");
@@ -63,7 +68,7 @@ export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps)
       setAnswer("Error: Failed to get response from GPT-4. Please try again.");
     }
     setLoading(false);
-  }, [input, getCurrentCode, useCodeContext]);
+  }, [input, getCurrentCode, useCodeContext, history]);
 
   const handleKeyPress = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
