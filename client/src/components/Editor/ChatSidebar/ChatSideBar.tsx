@@ -3,7 +3,11 @@ import styled from "styled-components";
 import { OpenAIService } from "../../../services/openai";
 import { ChatStorageManager } from "../../../utils/storage";
 import type { ChatHistory } from "../../../utils/storage";
-import { Copy as CopyIcon, Checkmark as CheckIcon, Close as CloseIcon } from "../../../components/Icons";
+import {
+  Copy as CopyIcon,
+  Checkmark as CheckIcon,
+  Close as CloseIcon,
+} from "../../../components/Icons";
 
 interface ChatSidebarProps {
   onReplaceCode: (code: string) => void;
@@ -18,42 +22,50 @@ const MIN_WIDTH = 300;
 const MAX_WIDTH = 800;
 const DEFAULT_WIDTH = 400;
 
-export const ChatSidebar = ({ 
-  onReplaceCode, 
-  getCurrentCode, 
+export const ChatSidebar = ({
+  onReplaceCode,
+  getCurrentCode,
   currentFilePath,
   width = DEFAULT_WIDTH,
   onWidthChange,
-  onClose
+  onClose,
 }: ChatSidebarProps) => {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [useCodeContext, setUseCodeContext] = useState(true);
   const [history, setHistory] = useState<ChatHistory[]>([]);
 
-  // Copied feedback states
+  // Copied/Applied feedback
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-
-  // Added state for showing a checkmark after applying code
   const [appliedIndex, setAppliedIndex] = useState<number | null>(null);
 
+  // Resizing
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<HTMLDivElement>(null);
   const startResizeX = useRef<number>(0);
   const startWidth = useRef<number>(0);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    setIsResizing(true);
-    startResizeX.current = e.clientX;
-    startWidth.current = width || 400;
-  }, [width]);
+  // Scroll ref
+  const chatHistoryRef = useRef<HTMLDivElement>(null);
+
+  // -------------------- Resizing Logic --------------------
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      setIsResizing(true);
+      startResizeX.current = e.clientX;
+      startWidth.current = width || 400;
+    },
+    [width]
+  );
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
-      
       const diff = startResizeX.current - e.clientX;
-      const newWidth = Math.min(Math.max(startWidth.current + diff, MIN_WIDTH), MAX_WIDTH);
+      const newWidth = Math.min(
+        Math.max(startWidth.current + diff, MIN_WIDTH),
+        MAX_WIDTH
+      );
       onWidthChange?.(newWidth);
     };
 
@@ -72,7 +84,7 @@ export const ChatSidebar = ({
     };
   }, [isResizing, onWidthChange]);
 
-  // Load chat history when component mounts or file changes
+  // -------------------- Chat History Logic --------------------
   useEffect(() => {
     if (currentFilePath) {
       const savedHistory = ChatStorageManager.loadHistory(currentFilePath);
@@ -87,71 +99,79 @@ export const ChatSidebar = ({
     }
   }, [currentFilePath]);
 
+  // -------------------- Copy & Apply Logic --------------------
   const handleCopyCode = useCallback((code: string, index: number) => {
     navigator.clipboard.writeText(code);
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);
   }, []);
 
-  // Updated to accept `index` for feedback
-  const handleApplyCode = useCallback((code: string, index: number) => {
-    if (code && code.trim()) {
-      onReplaceCode(code.trim());
-      // Show tick for 1 second
-      setAppliedIndex(index);
-      setTimeout(() => setAppliedIndex(null), 1000);
-    }
-  }, [onReplaceCode]);
-
-  const formatMessage = useCallback((content: string) => {
-    const parts = content.split("```");
-    return parts.map((part, index) => {
-      // Even index => normal text, odd index => code block
-      if (index % 2 === 0) {
-        return <TextContent key={index}>{part}</TextContent>;
-      } else {
-        const [language, ...codeParts] = part.split("\n");
-        const code = codeParts.join("\n").trim();
-        return (
-          <CodeBlock key={index}>
-            <CodeHeader>
-              <Language>{language}</Language>
-              <CodeActions>
-                <ActionButton 
-                  onClick={() => handleCopyCode(code, index)}
-                  title="Copy code"
-                >
-                  {copiedIndex === index ? <CheckIcon /> : <CopyIcon />}
-                </ActionButton>
-                <ActionButton 
-                  onClick={() => handleApplyCode(code, index)}
-                  title="Apply code to Editor"
-                >
-                  {appliedIndex === index ? <CheckIcon /> : "Apply"}
-                </ActionButton>
-              </CodeActions>
-            </CodeHeader>
-            <Pre>{code}</Pre>
-          </CodeBlock>
-        );
+  const handleApplyCode = useCallback(
+    (code: string, index: number) => {
+      if (code && code.trim()) {
+        onReplaceCode(code.trim());
+        setAppliedIndex(index);
+        setTimeout(() => setAppliedIndex(null), 1000);
       }
-    });
-  }, [handleCopyCode, handleApplyCode, copiedIndex, appliedIndex]);
+    },
+    [onReplaceCode]
+  );
 
+  // -------------------- Formatting GPT Response --------------------
+  const formatMessage = useCallback(
+    (content: string) => {
+      const parts = content.split("```");
+      return parts.map((part, idx) => {
+        // Even idx => normal text
+        if (idx % 2 === 0) {
+          return <TextContent key={idx}>{part}</TextContent>;
+        } else {
+          // Odd => code block
+          const [language, ...codeParts] = part.split("\n");
+          const code = codeParts.join("\n").trim();
+          return (
+            <CodeBlock key={idx}>
+              <CodeHeader>
+                <Language>{language}</Language>
+                <CodeActions>
+                  <ActionButton
+                    onClick={() => handleCopyCode(code, idx)}
+                    title="Copy code"
+                  >
+                    {copiedIndex === idx ? <CheckIcon /> : <CopyIcon />}
+                  </ActionButton>
+                  <ActionButton
+                    onClick={() => handleApplyCode(code, idx)}
+                    title="Apply code to Editor"
+                  >
+                    {appliedIndex === idx ? <CheckIcon /> : "Apply"}
+                  </ActionButton>
+                </CodeActions>
+              </CodeHeader>
+              <Pre>{code}</Pre>
+            </CodeBlock>
+          );
+        }
+      });
+    },
+    [handleCopyCode, handleApplyCode, copiedIndex, appliedIndex]
+  );
+
+  // -------------------- Sending to GPT --------------------
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
-    
     setLoading(true);
+
     try {
       const result = await OpenAIService.analyzeCode(
-        input, 
-        getCurrentCode(), 
+        input,
+        getCurrentCode(),
         useCodeContext,
         history
       );
-      
+
       const newHistoryEntry = { prompt: input, response: result };
-      setHistory(prev => [...prev, newHistoryEntry]);
+      setHistory((prev) => [...prev, newHistoryEntry]);
       ChatStorageManager.saveHistory(currentFilePath, [...history, newHistoryEntry]);
       setInput("");
     } catch (error) {
@@ -160,9 +180,17 @@ export const ChatSidebar = ({
     setLoading(false);
   }, [input, getCurrentCode, useCodeContext, history, currentFilePath]);
 
+  // -------------------- Auto-Scroll to Bottom --------------------
+  useEffect(() => {
+    if (!chatHistoryRef.current) return;
+    chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
+  }, [history, loading]);
+
+  // -------------------- RENDER --------------------
   return (
     <Container style={{ width: `${width}px` }}>
       <ResizeHandle ref={resizeRef} onMouseDown={handleMouseDown} />
+
       <Header>
         <HeaderContent>
           <HeaderTitle>Solana PG Assistant</HeaderTitle>
@@ -174,29 +202,41 @@ export const ChatSidebar = ({
           </HeaderActions>
         </HeaderContent>
       </Header>
-      
-      <ChatHistoryContainer>
+
+      {/* Chat area (scrollable) */}
+      <ChatHistoryContainer ref={chatHistoryRef}>
         {history.map((entry, index) => (
           <MessageGroup key={index}>
+            {/* User side */}
             <UserMessage>
               <Avatar>
                 <UserAvatar>You</UserAvatar>
               </Avatar>
               <MessageContent>{entry.prompt}</MessageContent>
             </UserMessage>
+
+            {/* AI side with Solana logo at top-left */}
             <AIMessage>
               <Avatar>
-                <AIAvatar>AI</AIAvatar>
+                <SolanaLogo
+                  src="/icons/platforms/Solana Logomark - Color.svg"
+                  alt="Solana Logo"
+                />
               </Avatar>
               <MessageContent>{formatMessage(entry.response)}</MessageContent>
             </AIMessage>
           </MessageGroup>
         ))}
+
+        {/* Loading spinner if GPT is still generating */}
         {loading && (
           <LoadingMessage>
             <AIMessage>
               <Avatar>
-                <AIAvatar>AI</AIAvatar>
+                <SolanaLogo
+                  src="/icons/platforms/Solana Logomark - Color.svg"
+                  alt="Solana Logo"
+                />
               </Avatar>
               <LoadingDots>
                 <span>.</span>
@@ -208,6 +248,7 @@ export const ChatSidebar = ({
         )}
       </ChatHistoryContainer>
 
+      {/* Input area */}
       <InputArea>
         <CodeContextToggle>
           <input
@@ -217,14 +258,14 @@ export const ChatSidebar = ({
           />
           <span>Include Current Code Context</span>
         </CodeContextToggle>
-        
+
         <TextArea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about the code or request changes..."
           disabled={loading}
         />
-        
+
         <SendButton onClick={handleSubmit} disabled={loading || !input.trim()}>
           {loading ? "Sending..." : "Send"}
         </SendButton>
@@ -233,7 +274,7 @@ export const ChatSidebar = ({
   );
 };
 
-/* -- STYLES -- */
+/* ==================== STYLED COMPONENTS ==================== */
 const Container = styled.div`
   display: flex;
   flex-direction: column;
@@ -268,7 +309,6 @@ const ResizeHandle = styled.div`
   &:hover {
     background: rgba(0, 0, 0, 0.1);
   }
-
   &:active {
     background: rgba(0, 0, 0, 0.2);
   }
@@ -308,7 +348,6 @@ const ClearButton = styled.button`
   &:hover {
     background: ${({ theme }) => theme.colors.default.bgSecondary};
   }
-
   &:active {
     transform: translateY(1px);
   }
@@ -319,9 +358,6 @@ const CloseButton = styled.button`
   background: transparent;
   border: none;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   border-radius: 4px;
 
   &:hover {
@@ -350,11 +386,14 @@ const MessageGroup = styled.div`
   gap: 1rem;
 `;
 
+/** Shared container for user & AI messages. */
 const Message = styled.div`
   display: flex;
   gap: 0.5rem;
   padding: 0.5rem;
   border-radius: 4px;
+  /* We'll ensure avatar is top-left by aligning flex-start: */
+  align-items: flex-start;
 `;
 
 const UserMessage = styled(Message)`
@@ -369,6 +408,9 @@ const Avatar = styled.div`
   font-size: 0.8rem;
   font-weight: bold;
   min-width: 30px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
 `;
 
 const UserAvatar = styled.div`
@@ -384,17 +426,10 @@ const UserAvatar = styled.div`
   font-weight: bold;
 `;
 
-const AIAvatar = styled.div`
-  background: #10a37f;
-  color: white;
+const SolanaLogo = styled.img`
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
 `;
 
 const MessageContent = styled.div`
@@ -407,6 +442,10 @@ const MessageContent = styled.div`
 
 const TextContent = styled.div`
   margin-bottom: 1rem;
+  /* Improve the look & readability of normal text */
+  font-family: "Open Sans", "Helvetica Neue", sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.4;
 `;
 
 const CodeBlock = styled.div`
@@ -507,7 +546,6 @@ const SendButton = styled.button`
     opacity: 0.5;
     cursor: not-allowed;
   }
-
   &:hover:not(:disabled) {
     opacity: 0.9;
   }
@@ -520,21 +558,20 @@ const LoadingMessage = styled.div`
 const LoadingDots = styled.div`
   display: flex;
   gap: 4px;
-  
+
   span {
     animation: loadingDots 1.4s infinite;
-    
     &:nth-child(2) {
       animation-delay: 0.2s;
     }
-    
     &:nth-child(3) {
       animation-delay: 0.4s;
     }
   }
 
   @keyframes loadingDots {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 0.2;
     }
     50% {
