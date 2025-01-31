@@ -11,6 +11,7 @@ export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps)
   const [input, setInput] = useState("");
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
+  const [useCodeContext, setUseCodeContext] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("");
   const [history, setHistory] = useState<Array<{prompt: string, response: string}>>([]);
 
@@ -49,11 +50,11 @@ export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps)
     if (!input.trim()) return;
     
     setLoading(true);
-    setLoadingMessage(loadingMessages[0]); // Set initial message immediately
+    setLoadingMessage(loadingMessages[0]);
     
     try {
-      const currentCode = getCurrentCode();
-      const result = await OpenAIService.analyzeCode(input, currentCode);
+      const currentCode = useCodeContext ? getCurrentCode() : "";
+      const result = await OpenAIService.analyzeCode(input, currentCode, useCodeContext);
       setAnswer(result);
       setHistory(prev => [...prev, { prompt: input, response: result }]);
       setInput("");
@@ -62,7 +63,7 @@ export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps)
       setAnswer("Error: Failed to get response from GPT-4. Please try again.");
     }
     setLoading(false);
-  }, [input, getCurrentCode]);
+  }, [input, getCurrentCode, useCodeContext]);
 
   const handleKeyPress = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -180,10 +181,21 @@ export const ChatSidebar = ({ onReplaceCode, getCurrentCode }: ChatSidebarProps)
       </ChatContainer>
 
       <InputContainer>
+        <ContextToggle>
+          <ToggleCheckbox
+            type="checkbox"
+            checked={useCodeContext}
+            onChange={(e) => setUseCodeContext(e.target.checked)}
+            id="context-toggle"
+          />
+          <ToggleLabel htmlFor="context-toggle">
+            Include Current Code Context
+          </ToggleLabel>
+        </ContextToggle>
         <StyledTextArea
           value={input}
           onChange={ev => setInput(ev.target.value)}
-          placeholder="Ask about the code or request changes..."
+          placeholder={useCodeContext ? "Ask about the code or request changes..." : "Ask a general question..."}
           disabled={loading}
         />
         <SendButton onClick={handleSubmit} disabled={loading || !input.trim()}>
@@ -435,4 +447,23 @@ const LoadingDots = styled.div`
     0%, 80%, 100% { opacity: 0; }
     40% { opacity: 1; }
   }
+`;
+
+const ContextToggle = styled.div`
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding: 0 0.5rem;
+`;
+
+const ToggleCheckbox = styled.input`
+  margin-right: 0.5rem;
+  cursor: pointer;
+`;
+
+const ToggleLabel = styled.label`
+  color: ${({ theme }) => theme.colors.default.textSecondary};
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
 `;
