@@ -154,22 +154,39 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   // -------------------- Sending to GPT --------------------
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
+
+    // Create a new history entry with the user's prompt and an empty response.
+    const userPrompt = input;
+    const newHistoryEntry = { prompt: userPrompt, response: "" };
+
+    // Immediately update the chat history so the user's message appears.
+    const updatedHistory = [...history, newHistoryEntry];
+    setHistory(updatedHistory);
+    ChatStorageManager.saveHistory(currentFilePath, updatedHistory);
+
+    // Clear the input immediately.
+    setInput("");
+
+    // Now show the loading indicator.
     setLoading(true);
 
     try {
+      // Call the API using the user’s prompt.
       const result = await OpenAIService.analyzeCode(
-        input,
+        userPrompt,
         getCurrentCode(),
         useCodeContext,
-        history
+        updatedHistory
       );
-      const newHistoryEntry = { prompt: input, response: result };
-      const updatedHistory = [...history, newHistoryEntry];
-      setHistory(updatedHistory);
-      ChatStorageManager.saveHistory(currentFilePath, updatedHistory);
-      setInput("");
+
+      // Update the last entry (the one we just added) with the response.
+      const finalHistory = updatedHistory.slice();
+      finalHistory[finalHistory.length - 1] = { prompt: userPrompt, response: result };
+      setHistory(finalHistory);
+      ChatStorageManager.saveHistory(currentFilePath, finalHistory);
     } catch (error) {
       console.error("GPT-4 API failed:", error);
+      // Optionally, update the entry with an error message or keep it blank.
     }
     setLoading(false);
   }, [input, getCurrentCode, useCodeContext, history, currentFilePath]);
@@ -226,43 +243,31 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   alt="Solana Logo"
                 />
               </Avatar>
-              <MessageContent>{formatMessage(entry.response)}</MessageContent>
+              {entry.response === "" && loading ? (
+                <LoadingDots>
+                  <span>.</span>
+                  <span>.</span>
+                  <span>.</span>
+                </LoadingDots>
+              ) : (
+                <MessageContent>{formatMessage(entry.response)}</MessageContent>
+              )}
             </AIMessage>
           </MessageGroup>
         ))}
-
-        {/* Loading spinner if GPT is still generating */}
-        {loading && (
-          <LoadingMessage>
-            <AIMessage>
-              <Avatar>
-                <SolanaLogo
-                  src="/icons/platforms/Solana Logomark - Color.svg"
-                  alt="Solana Logo"
-                />
-              </Avatar>
-              <LoadingDots>
-                <span>.</span>
-                <span>.</span>
-                <span>.</span>
-              </LoadingDots>
-            </AIMessage>
-          </LoadingMessage>
-        )}
       </ChatHistoryContainer>
 
       {/* Input Area */}
       <InputArea>
-      <CodeContextToggle>
-  <input
-    type="checkbox"
-    id="codeContextToggle"
-    checked={useCodeContext}
-    onChange={(e) => setUseCodeContext(e.target.checked)}
-  />
-  <span>Include Current Code Context</span>
-</CodeContextToggle>
-
+        <CodeContextToggle>
+          <input
+            type="checkbox"
+            id="codeContextToggle"
+            checked={useCodeContext}
+            onChange={(e) => setUseCodeContext(e.target.checked)}
+          />
+          <span>Include Current Code Context</span>
+        </CodeContextToggle>
 
         <TextArea
           value={input}
@@ -560,10 +565,7 @@ const SendButton = styled.button`
   }
 `;
 
-const LoadingMessage = styled.div`
-  opacity: 0.7;
-`;
-
+/** We no longer need a separate LoadingMessage container since the spinner is merged into the AI message. */
 const LoadingDots = styled.div`
   display: flex;
   gap: 4px;
