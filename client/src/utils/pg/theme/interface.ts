@@ -7,7 +7,7 @@ import { TextKind } from "../../../components/Text";
 import { AllRequired, ChildRequired, NestedRequired } from "../types";
 
 /** Playground theme */
-export interface Theme {
+export interface ThemeParam {
   /** Whether the theme is a dark theme */
   isDark: boolean;
 
@@ -444,14 +444,17 @@ export interface Font {
 }
 
 /** Importable(lazy) theme */
-export interface ImportableTheme {
+export interface ImportableThemeParam {
   /** Name of the theme that's displayed in theme settings */
   name: string;
   /** Import promise for the theme to lazy load */
-  importTheme: () => Promise<{
-    default: Theme;
+  importTheme?: () => Promise<{
+    default: ThemeParam;
   }>;
 }
+
+/** Importable(lazy) theme */
+export type ImportableTheme = Required<ImportableThemeParam>;
 
 /** Components that use `DefaultComponent` type */
 type DefaultComponents = "input" | "skeleton" | "tooltip";
@@ -474,7 +477,7 @@ type OverridableComponents = "button" | "menu" | "text";
 
 /** Theme to be used while setting the defaults internally */
 export type ThemeInternal = Partial<Pick<ImportableTheme, "name">> &
-  Theme & {
+  ThemeParam & {
     /** Default font */
     font?: {
       /** Code font */
@@ -488,7 +491,7 @@ export type ThemeInternal = Partial<Pick<ImportableTheme, "name">> &
  * Ready to be used theme. Some of the optional properties will be overridden
  * with default values.
  */
-export type ThemeReady<
+export type Theme<
   T extends ThemeInternal = ThemeInternal,
   C extends NonNullable<T["components"]> = NonNullable<T["components"]>,
   V extends NonNullable<T["views"]> = NonNullable<T["views"]>
@@ -592,7 +595,7 @@ type StateColor = {
 /** Theme color names */
 export type ThemeColor =
   | keyof Pick<
-      ThemeReady["colors"]["default"],
+      Theme["colors"]["default"],
       "primary" | "secondary" | "textPrimary" | "textSecondary"
     >
-  | keyof Omit<ThemeReady["colors"]["state"], "hover" | "disabled">;
+  | keyof Omit<Theme["colors"]["state"], "hover" | "disabled">;
