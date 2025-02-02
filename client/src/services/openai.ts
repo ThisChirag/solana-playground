@@ -3,10 +3,6 @@ import { PgExplorer } from "../utils/pg";
 const PROXY_URL = "http://localhost:3001";
 const MAX_HISTORY_PAIRS = 4; // Keep last 4 pairs of messages
 
-interface OpenAIResponse {
-  choices: Array<{ message: { content: string } }>;
-}
-
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -23,7 +19,6 @@ export class OpenAIService {
     const isRustFile = lowerLang.includes("rust");
     const isPythonFile = lowerLang.includes("python");
 
-    // Intro that applies to all frameworks/languages
     let prompt = `
 You are an **advanced Solana development assistant** with extensive expertise in:
  • Anchor (Rust)
@@ -46,7 +41,6 @@ You are an **advanced Solana development assistant** with extensive expertise in
 4. Emphasize correctness, security, performance, and clarity in all solutions.
 `.trim();
 
-    // If it’s Rust, append extra program guidelines
     if (isRustFile) {
       prompt += `
 
@@ -56,9 +50,7 @@ SOLANA RUST PROGRAM GUIDELINES:
 • Provide robust error handling (custom errors or standard program errors).
 • Ensure safe cross-program invocations if used (Anchor or Native).
 `;
-    }
-    // If it’s Python (Seahorse)
-    else if (isPythonFile) {
+    } else if (isPythonFile) {
       prompt += `
 
 SEAHORSE (PYTHON) GUIDELINES:
@@ -67,9 +59,7 @@ SEAHORSE (PYTHON) GUIDELINES:
 • Respect Solana's compute budget and rent rules, even in Python.
 • Use Seahorse macros in a safe and consistent manner.
 `;
-    }
-    // Otherwise assume client-side or unknown
-    else {
+    } else {
       prompt += `
 
 CLIENT-SIDE / UNKNOWN LANGUAGE GUIDELINES:
@@ -84,28 +74,33 @@ CLIENT-SIDE / UNKNOWN LANGUAGE GUIDELINES:
   }
 
   /**
-   * Analyzes user prompt + optional current code context + chat history,
-   * then returns GPT-4's response.
+   * Analyzes user prompt plus (optionally) current code context and chat history,
+   * then streams the GPT-4 response.
+   *
+   * @param prompt - The user's prompt.
+   * @param currentCode - The current code from the editor.
+   * @param useCodeContext - Whether to include current code context.
+   * @param previousMessages - Previous chat messages.
+   * @param onProgress - Callback invoked with the cumulative partial response.
+   * @returns Final response string.
    */
   static async analyzeCode(
     prompt: string,
     currentCode: string,
     useCodeContext: boolean = true,
-    previousMessages: Array<{ prompt: string; response: string }> = []
+    previousMessages: Array<{ prompt: string; response: string }> = [],
+    onProgress?: (partialResponse: string) => void
   ): Promise<string> {
     try {
-      // Get the current language name from the Playground
       const currentLang = PgExplorer.getCurrentFileLanguage()?.name || "Unknown";
 
-      // Convert your chat history into an array of system/user/assistant messages
       const historyMessages: ChatMessage[] = previousMessages
-        .slice(-MAX_HISTORY_PAIRS) // keep only last N pairs
+        .slice(-MAX_HISTORY_PAIRS)
         .flatMap(({ prompt, response }) => [
           { role: "user", content: prompt },
           { role: "assistant", content: response },
         ]);
 
-      // Build the user message, optionally including the current code snippet
       const currentUserMessage = useCodeContext
         ? `
 The current file is in ${currentLang}.
@@ -121,22 +116,24 @@ Please analyze the code and respond with best practices, specifying changes if n
 `.trim()
         : `User request: ${prompt}`;
 
-      // Send request to your local proxy (which calls OpenAI behind the scenes)
+      const requestBody = {
+        model: "gpt-4",
+        messages: [
+          { role: "system", content: this.getSystemPrompt(currentLang) },
+          ...historyMessages,
+          { role: "user", content: currentUserMessage },
+        ],
+        temperature: 0.7,
+        max_tokens: 4000,
+        stream: true,
+      };
+
       const response = await fetch(`${PROXY_URL}/api/openai`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: "gpt-4",
-          messages: [
-            { role: "system", content: this.getSystemPrompt(currentLang) },
-            ...historyMessages,
-            { role: "user", content: currentUserMessage },
-          ],
-          temperature: 0.7,
-          max_tokens: 4000,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -145,12 +142,41 @@ Please analyze the code and respond with best practices, specifying changes if n
         throw new Error(`API error: ${errorData?.error || response.statusText}`);
       }
 
-      const data: OpenAIResponse = await response.json();
-      if (!data.choices?.[0]?.message?.content) {
-        throw new Error("Invalid response format from API");
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No reader available from response body.");
+
+      const decoder = new TextDecoder("utf-8");
+      let done = false;
+      let fullResponse = "";
+
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        const chunk = decoder.decode(value, { stream: true });
+        // Split into lines and filter out empty ones
+        const lines = chunk.split("\n").filter((line) => line.trim() !== "");
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.substring("data: ".length).trim();
+            if (dataStr === "[DONE]") {
+              done = true;
+              break;
+            }
+            try {
+              const parsed = JSON.parse(dataStr);
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) {
+                fullResponse += delta;
+                if (onProgress) onProgress(fullResponse);
+              }
+            } catch (error) {
+              console.error("Error parsing stream chunk:", error);
+            }
+          }
+        }
       }
 
-      return data.choices[0].message.content;
+      return fullResponse;
     } catch (error) {
       console.error("Error calling API:", error);
       throw error instanceof Error
@@ -161,7 +187,6 @@ Please analyze the code and respond with best practices, specifying changes if n
 
   /**
    * Extracts the first code block from the GPT-4 response.
-   * e.g. If GPT says ```rust\n...```, it returns just the inside portion.
    */
   static extractCodeBlock(response: string): string {
     const codeBlockRegex = /```(?:[\w-]*\n)?([\s\S]*?)```/;

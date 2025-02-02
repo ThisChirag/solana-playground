@@ -151,42 +151,48 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     });
   }, [handleCopyCode, handleApplyCode, copiedIndex, appliedIndex]);
 
-  // -------------------- Sending to GPT --------------------
+  // -------------------- Sending to GPT with Streaming --------------------
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
 
-    // Create a new history entry with the user's prompt and an empty response.
     const userPrompt = input;
-    const newHistoryEntry = { prompt: userPrompt, response: "" };
-
-    // Immediately update the chat history so the user's message appears.
-    const updatedHistory = [...history, newHistoryEntry];
-    setHistory(updatedHistory);
-    ChatStorageManager.saveHistory(currentFilePath, updatedHistory);
-
-    // Clear the input immediately.
+    // Add a new entry with an empty response.
+    setHistory((prev) => {
+      const newHistory = [...prev, { prompt: userPrompt, response: "" }];
+      ChatStorageManager.saveHistory(currentFilePath, newHistory);
+      return newHistory;
+    });
     setInput("");
-
-    // Now show the loading indicator.
     setLoading(true);
 
+    let finalResponse = "";
     try {
-      // Call the API using the user’s prompt.
-      const result = await OpenAIService.analyzeCode(
+      await OpenAIService.analyzeCode(
         userPrompt,
         getCurrentCode(),
         useCodeContext,
-        updatedHistory
+        history,
+        (partialResponse) => {
+          // Update only if the partial response changed
+          if (partialResponse !== finalResponse) {
+            finalResponse = partialResponse;
+            setHistory((prev) => {
+              const newHistory = [...prev];
+              newHistory[newHistory.length - 1] = { prompt: userPrompt, response: finalResponse };
+              return newHistory;
+            });
+          }
+        }
       );
-
-      // Update the last entry (the one we just added) with the response.
-      const finalHistory = updatedHistory.slice();
-      finalHistory[finalHistory.length - 1] = { prompt: userPrompt, response: result };
-      setHistory(finalHistory);
-      ChatStorageManager.saveHistory(currentFilePath, finalHistory);
+      // Save the final response in persistent storage.
+      setHistory((prev) => {
+        const newHistory = [...prev];
+        newHistory[newHistory.length - 1] = { prompt: userPrompt, response: finalResponse };
+        ChatStorageManager.saveHistory(currentFilePath, newHistory);
+        return newHistory;
+      });
     } catch (error) {
       console.error("GPT-4 API failed:", error);
-      // Optionally, update the entry with an error message or keep it blank.
     }
     setLoading(false);
   }, [input, getCurrentCode, useCodeContext, history, currentFilePath]);
@@ -402,7 +408,6 @@ const MessageGroup = styled.div`
   gap: 1rem;
 `;
 
-/** Shared container for user & AI messages */
 const Message = styled.div`
   display: flex;
   gap: 0.5rem;
@@ -565,7 +570,6 @@ const SendButton = styled.button`
   }
 `;
 
-/** We no longer need a separate LoadingMessage container since the spinner is merged into the AI message. */
 const LoadingDots = styled.div`
   display: flex;
   gap: 4px;
