@@ -11,7 +11,9 @@ const DIRS = [
   "frameworks",
   "languages",
   "routes",
+  "settings",
   "themes",
+  "tutorials",
 ];
 
 for (const dir of DIRS) {
@@ -19,7 +21,7 @@ for (const dir of DIRS) {
   const items = await fs
     .readdir(dirPath)
     .then((items) => items.map(pathModule.parse));
-  const namesToSkip = [dir, "index"];
+  const namesToSkip = [dir, "index", "__template"];
   const hasDir = items.some((item) => !item.ext);
   const exports = items
     .filter(
