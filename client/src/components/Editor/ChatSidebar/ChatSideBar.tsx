@@ -30,14 +30,19 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onWidthChange,
   onClose,
 }) => {
+  // Input and chat history state
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
   const [useCodeContext, setUseCodeContext] = useState(false);
   const [history, setHistory] = useState<ChatHistory[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [appliedIndex, setAppliedIndex] = useState<number | null>(null);
+  // Loading state per message (keys are strings)
+  const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
 
-  // Timer refs for copied and applied indicators
+  // Ref to keep track of the next message index (each new prompt gets its own ID)
+  const nextMessageIndex = useRef(0);
+
+  // Timer refs for copy and apply indicators
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,15 +52,28 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   const startResizeX = useRef<number>(0);
   const startWidth = useRef<number>(width);
 
-  // Scroll ref for chat history
+  // Chat history scrolling
   const chatHistoryRef = useRef<HTMLDivElement>(null);
+  // Track whether auto-scroll is enabled (i.e. user hasn’t scrolled away from the bottom)
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+
+  const handleScroll = () => {
+    if (chatHistoryRef.current) {
+      const { scrollTop, clientHeight, scrollHeight } = chatHistoryRef.current;
+      const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setAutoScrollEnabled(atBottom);
+    }
+  };
 
   // -------------------- Resizing Logic --------------------
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    setIsResizing(true);
-    startResizeX.current = e.clientX;
-    startWidth.current = width;
-  }, [width]);
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      setIsResizing(true);
+      startResizeX.current = e.clientX;
+      startWidth.current = width;
+    },
+    [width]
+  );
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -85,6 +103,9 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     if (currentFilePath) {
       const savedHistory = ChatStorageManager.loadHistory(currentFilePath);
       setHistory(savedHistory);
+      // Reset index and loading states when loading history
+      nextMessageIndex.current = savedHistory.length;
+      setLoadingMap({});
     }
   }, [currentFilePath]);
 
@@ -92,6 +113,8 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     if (currentFilePath) {
       ChatStorageManager.clearHistory(currentFilePath);
       setHistory([]);
+      setLoadingMap({});
+      nextMessageIndex.current = 0;
     }
   }, [currentFilePath]);
 
@@ -103,67 +126,78 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     copyTimerRef.current = setTimeout(() => setCopiedIndex(null), 2000);
   }, []);
 
-  const handleApplyCode = useCallback((code: string, index: number) => {
-    if (code.trim()) {
-      onReplaceCode(code.trim());
-      setAppliedIndex(index);
-      if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
-      applyTimerRef.current = setTimeout(() => setAppliedIndex(null), 1000);
-    }
-  }, [onReplaceCode]);
+  const handleApplyCode = useCallback(
+    (code: string, index: number) => {
+      if (code.trim()) {
+        onReplaceCode(code.trim());
+        setAppliedIndex(index);
+        if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
+        applyTimerRef.current = setTimeout(() => setAppliedIndex(null), 1000);
+      }
+    },
+    [onReplaceCode]
+  );
 
   // -------------------- Formatting GPT Response --------------------
-  const formatMessage = useCallback((content: string) => {
-    const parts = content.split("```");
-    return parts.map((part, idx) => {
-      // Even index: regular text
-      if (idx % 2 === 0) {
-        return <TextContent key={idx}>{part}</TextContent>;
-      } else {
-        // Odd index: code block
-        const [language, ...codeParts] = part.split("\n");
-        const code = codeParts.join("\n").trim();
-        return (
-          <CodeBlock key={idx}>
-            <CodeHeader>
-              <Language>{language || "code"}</Language>
-              <CodeActions>
-                <ActionButton
-                  onClick={() => handleCopyCode(code, idx)}
-                  title="Copy code"
-                  aria-label="Copy code"
-                >
-                  {copiedIndex === idx ? <CheckIcon /> : <CopyIcon />}
-                </ActionButton>
-                <ActionButton
-                  onClick={() => handleApplyCode(code, idx)}
-                  title="Apply code to editor"
-                  aria-label="Apply code"
-                >
-                  {appliedIndex === idx ? <CheckIcon /> : "Apply"}
-                </ActionButton>
-              </CodeActions>
-            </CodeHeader>
-            <Pre>{code}</Pre>
-          </CodeBlock>
-        );
-      }
-    });
-  }, [handleCopyCode, handleApplyCode, copiedIndex, appliedIndex]);
+  const formatMessage = useCallback(
+    (content: string) => {
+      const parts = content.split("```");
+      return parts.map((part, idx) => {
+        // Even index: regular text
+        if (idx % 2 === 0) {
+          return <TextContent key={idx}>{part}</TextContent>;
+        } else {
+          // Odd index: code block
+          const [language, ...codeParts] = part.split("\n");
+          const code = codeParts.join("\n").trim();
+          return (
+            <CodeBlock key={idx}>
+              <CodeHeader>
+                <Language>{language || "code"}</Language>
+                <CodeActions>
+                  <ActionButton
+                    onClick={() => handleCopyCode(code, idx)}
+                    title="Copy code"
+                    aria-label="Copy code"
+                  >
+                    {copiedIndex === idx ? <CheckIcon /> : <CopyIcon />}
+                  </ActionButton>
+                  <ActionButton
+                    onClick={() => handleApplyCode(code, idx)}
+                    title="Apply code to editor"
+                    aria-label="Apply code"
+                  >
+                    {appliedIndex === idx ? <CheckIcon /> : "Apply"}
+                  </ActionButton>
+                </CodeActions>
+              </CodeHeader>
+              <Pre>{code}</Pre>
+            </CodeBlock>
+          );
+        }
+      });
+    },
+    [handleCopyCode, handleApplyCode, copiedIndex, appliedIndex]
+  );
 
   // -------------------- Sending to GPT with Streaming --------------------
   const handleSubmit = useCallback(async () => {
     if (!input.trim()) return;
 
     const userPrompt = input;
-    // Add a new entry with an empty response.
+    // Get a unique index for this new message
+    const currentIndex = nextMessageIndex.current;
+    nextMessageIndex.current += 1;
+
+    // Add a new chat entry with an empty response.
     setHistory((prev) => {
       const newHistory = [...prev, { prompt: userPrompt, response: "" }];
       ChatStorageManager.saveHistory(currentFilePath, newHistory);
       return newHistory;
     });
+    // Mark this message as loading (convert the key to a string)
+    setLoadingMap((prev) => ({ ...prev, [currentIndex]: true }));
     setInput("");
-    setLoading(true);
 
     let finalResponse = "";
     try {
@@ -171,38 +205,42 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
         userPrompt,
         getCurrentCode(),
         useCodeContext,
-        history,
+        history, // (Used for context; it may be slightly stale but works in most cases)
         (partialResponse) => {
-          // Update only if the partial response changed
           if (partialResponse !== finalResponse) {
             finalResponse = partialResponse;
             setHistory((prev) => {
               const newHistory = [...prev];
-              newHistory[newHistory.length - 1] = { prompt: userPrompt, response: finalResponse };
+              newHistory[currentIndex] = { prompt: userPrompt, response: finalResponse };
               return newHistory;
             });
           }
         }
       );
-      // Save the final response in persistent storage.
+      // Save the final response
       setHistory((prev) => {
         const newHistory = [...prev];
-        newHistory[newHistory.length - 1] = { prompt: userPrompt, response: finalResponse };
+        newHistory[currentIndex] = { prompt: userPrompt, response: finalResponse };
         ChatStorageManager.saveHistory(currentFilePath, newHistory);
         return newHistory;
       });
     } catch (error) {
       console.error("GPT-4 API failed:", error);
     }
-    setLoading(false);
-  }, [input, getCurrentCode, useCodeContext, history, currentFilePath]);
+    // Mark this message as finished loading
+    setLoadingMap((prev) => {
+      const newMap = { ...prev };
+      delete newMap[currentIndex];
+      return newMap;
+    });
+  }, [input, getCurrentCode, useCodeContext, currentFilePath, history]);
 
   // -------------------- Auto-Scroll to Bottom --------------------
   useEffect(() => {
-    if (chatHistoryRef.current) {
+    if (chatHistoryRef.current && autoScrollEnabled) {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
-  }, [history, loading]);
+  }, [history, autoScrollEnabled]);
 
   // -------------------- Cleanup --------------------
   useEffect(() => {
@@ -230,7 +268,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       </Header>
 
       {/* Chat History */}
-      <ChatHistoryContainer ref={chatHistoryRef}>
+      <ChatHistoryContainer ref={chatHistoryRef} onScroll={handleScroll}>
         {history.map((entry, index) => (
           <MessageGroup key={index}>
             {/* User Message */}
@@ -249,7 +287,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   alt="Solana Logo"
                 />
               </Avatar>
-              {entry.response === "" && loading ? (
+              {entry.response === "" && loadingMap[index] ? (
                 <LoadingDots>
                   <span>.</span>
                   <span>.</span>
@@ -279,7 +317,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about the code or request changes..."
-          disabled={loading}
+          // Allow typing even while responses are streaming
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -288,8 +326,8 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           }}
         />
 
-        <SendButton onClick={handleSubmit} disabled={loading || !input.trim()}>
-          {loading ? "Sending..." : "Send"}
+        <SendButton onClick={handleSubmit} disabled={!input.trim()}>
+          {Object.keys(loadingMap).length > 0 ? "Sending..." : "Send"}
         </SendButton>
       </InputArea>
     </Container>

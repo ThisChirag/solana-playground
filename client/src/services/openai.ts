@@ -1,6 +1,6 @@
 import { PgExplorer } from "../utils/pg";
 
-const PROXY_URL = "http://localhost:3001";
+const PROXY_URL = "https://sol.chiragcodes.com/proxy";
 const MAX_HISTORY_PAIRS = 4; // Keep last 4 pairs of messages
 
 interface ChatMessage {
